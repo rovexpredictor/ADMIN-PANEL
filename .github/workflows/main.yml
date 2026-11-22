@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build and Sign Android APK
 
 on:
   push:
@@ -25,21 +25,45 @@ jobs:
             unzip -o *.zip -d extracted_project
           fi
 
-      - name: Build Debug APK
+      - name: Build Release APK
         run: |
           PROJECT_DIR=$(dirname "$(find . -name 'settings.gradle*' -o -name 'gradlew' | head -n 1)")
-          echo "Building in: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
           cd "$PROJECT_DIR"
           if [ -f "./gradlew" ]; then
             chmod +x gradlew
-            ./gradlew assembleDebug
+            ./gradlew assembleRelease
           else
-            gradle assembleDebug
+            gradle assembleRelease
           fi
 
-      - name: Upload APK
+      - name: Generate Keystore and Sign APK
+        run: |
+          UNSIGNED_APK=$(find "$PROJECT_DIR" -name "*release*.apk" | head -n 1)
+          echo "Found APK: $UNSIGNED_APK"
+
+          keytool -genkeypair -v \
+            -keystore release-key.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias adminkey \
+            -storepass 123456 -keypass 123456 \
+            -dname "CN=Admin Panel, OU=App, O=Admin, L=Mumbai, S=MH, C=IN"
+
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS/zipalign" -v -p 4 "$UNSIGNED_APK" aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks release-key.jks \
+            --ks-key-alias adminkey \
+            --ks-pass pass:123456 \
+            --key-pass pass:123456 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out Admin-Panel-Signed.apk \
+            aligned.apk
+
+      - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Admin-Panel-APK
-          path: "**/*.apk"
-          
+          name: Admin-Panel-Signed-APK
+          path: Admin-Panel-Signed.apk
